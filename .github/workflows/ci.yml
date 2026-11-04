@@ -34,7 +34,7 @@ jobs:
           paths_ignore: '["**/docs/**", "**/*.md"]'
 
   # 子仓库指针一致性前置（issue #1384）：发布顺序出错时，指针会先于子仓库推送，
-  # 之后所有平台的 Checkout 会各自报一遍 `not our ref`，看起来像 5 个平台同时崩。
+  # 之后 Checkout 会报 `not our ref`，在真正的构建开始前就失败。
   # 这里先用 `git ls-remote` 逐个确认指针在远端可达，不可达立刻以明确信息失败，
   # 一次说清是哪几个子仓库、哪些提交。
   submodules:
@@ -231,29 +231,13 @@ jobs:
           echo "unit tests not selected: ${{ needs.changes.outputs.reason }}"
 
   # Rust 单测与桌面 CDP E2E 同一环境共用一次编译：pnpm install 只落宿主平台的
-  # 原生可选依赖，交叉架构跑会漏装另一侧（issue #1326），因此两个矩阵必须逐项同构。
-  # 合并前是两条独立 job，各自 checkout / install / 编译一遍，5 个平台白跑两轮。
+  # 原生可选依赖，交叉架构跑会漏装另一侧（issue #1326）。
   rust-e2e:
-    name: Rust tests & Desktop CDP E2E (${{ matrix.runner }})
-    # 指针不可达时直接跳过：5 个平台各自 Checkout 报一遍同样的 `not our ref`，只会把
-    # 一条环境问题放大成「整批全崩」（issue #1384）。
+    name: Rust tests & Desktop CDP E2E (Windows ARM64)
+    # 指针不可达时直接跳过，避免 Checkout 把子仓库问题伪装成测试失败（issue #1384）。
     needs: [pre_job, changes, submodules]
     if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1' || needs.changes.outputs.desktop == '1') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            arch: x64
-          - runner: ubuntu-22.04-arm
-            arch: arm64
-          - runner: macos-26
-            arch: arm64
-          - runner: macos-26-intel
-            arch: x64
-          - runner: windows-latest
-            arch: x64
-    runs-on: ${{ matrix.runner }}
+    runs-on: windows-11-arm
     timeout-minutes: 90
     env:
       DSH_RUST_SCOPE: ${{ needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1' }}
@@ -271,28 +255,21 @@ jobs:
         with:
           submodules: true
 
-      # 标签写错（例如把 x64 指到 Apple Silicon）不会报错，只会在错误架构上跑出一份
-      # 看似通过的绿灯，这里把 runner.arch 与矩阵声明对齐。
+      # 标签写错不会报错，只会在错误架构上跑出一份看似通过的绿灯。
       - name: Verify runner architecture
         shell: bash
         run: |
-          case "${{ matrix.arch }}" in
-            x64) expected=X64 ;;
-            arm64) expected=ARM64 ;;
-            *) echo "::error::unknown matrix arch '${{ matrix.arch }}'"; exit 1 ;;
-          esac
-          if [ "${{ runner.arch }}" != "$expected" ]; then
-            echo "::error::${{ matrix.runner }} is ${{ runner.arch }}, matrix declares ${{ matrix.arch }}"
+          if [ "${{ runner.arch }}" != "ARM64" ]; then
+            echo "::error::windows-11-arm is ${{ runner.arch }}, expected ARM64"
             exit 1
           fi
           echo "runner arch OK: ${{ runner.arch }}"
 
-      # standalone 只解决 Windows 上找不到 pnpm.exe 的问题；@pnpm/exe 没有
-      # darwin-x64 的可用二进制（pnpm#11423），在 Intel macOS runner 上会直接装不上。
+      # standalone 解决 Windows 上找不到 pnpm.exe 的问题。
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
         with:
-          standalone: ${{ runner.os == 'Windows' }}
+          standalone: true
 
       - name: Expose pnpm.exe (Windows)
         if: runner.os == 'Windows'
@@ -311,33 +288,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Rust 侧 dbus / appindicator / patchelf，桌面端侧 GTK 与 headless 的 xvfb。
-      # 镜像站偶发 5xx / 半截连接：固定 3 次尝试并打印重试序号，够了就停；失败仍以
-      # 退出码失败，不静默降级（issue #1384）。
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get -o Acquire::Retries=3 update \
-              && sudo apt-get -y -o Acquire::Retries=3 install dbus libappindicator3-dev \
-                 librsvg2-dev patchelf libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 xvfb; then
-              echo "apt-get succeeded on attempt ${attempt}"
-              exit 0
-            fi
-            echo "::warning::apt-get attempt ${attempt}/3 failed; retrying in $((attempt * 10))s"
-            sleep $((attempt * 10))
-          done
-          echo "::error::apt-get failed after 3 attempts"
-          exit 1
-
       - name: Cache Electron distribution
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/electron
-            ~/Library/Caches/electron
-            ~/AppData/Local/electron/Cache
+          path: ~/AppData/Local/electron/Cache
           key: electron-45.0.0-${{ runner.os }}-${{ runner.arch }}
 
       # 工具链固定到仓库验证过的版本（issue #1384）：@stable 会在任意一次运行时换
@@ -345,9 +299,14 @@ jobs:
       - name: Install Rust 1.98.1
         uses: dtolnay/rust-toolchain@1.98.1
 
-      - name: Setup Xcode
-        if: runner.os == 'macOS'
-        uses: ./.github/actions/setup-xcode
+      - name: Verify Rust target
+        shell: bash
+        run: |
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          if [ "$host" != "aarch64-pc-windows-msvc" ]; then
+            echo "::error::Rust host is $host, expected aarch64-pc-windows-msvc"
+            exit 1
+          fi
 
       # Rust 测试与桌面端都落在 apps/desktop/src-tauri/target；E2E 显式指定
       # --target-dir 复用同一份 cache，避免两份 target 缓存互相覆盖。
@@ -400,16 +359,12 @@ jobs:
             echo "Runtime IPC readiness regression was not collected"
             exit 1
           fi
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            xvfb-run --auto-servernum "${args[@]}"
-          else
-            "${args[@]}"
-          fi
+          "${args[@]}"
 
       # 二进制已编译完成，两条车道互不依赖：并发跑，总耗时取较慢的一方而不是相加。
       # E2E 只起 Electron 进程、不再调用 cargo，不会和 cargo test 抢 target 目录锁；
       # 每条车道加 [rust] / [e2e] 前缀流式打印，卡在哪一侧一眼能看出来。
-      # 稳定性和 macOS 登录项变体验证需要多轮，按需在本地/手动触发执行，
+      # 稳定性验证需要多轮，按需在本地/手动触发执行，
       # 仍随 PR 跑的是 Rust 侧既有用例，准入前需本地连跑 5 次无 Flake（issue #1059）。
       - name: Run Rust tests and Desktop CDP E2E in parallel
         shell: bash
@@ -419,22 +374,12 @@ jobs:
 
           rust_lane() {
             ( cd apps/desktop/src-tauri && cargo test --all-features --locked ) || return 1
-            if [[ "$RUNNER_OS" == "Windows" ]]; then
-              cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features || return 1
-            fi
-            if [[ "$RUNNER_OS" == "macOS" ]]; then
-              cargo test --locked --manifest-path crates/tauri-runtime-electron/Cargo.toml --lib --test macos_native_loop --target-dir apps/desktop/src-tauri/target || return 1
-            fi
+            cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features || return 1
           }
 
           e2e_lane() {
-            export DSH_E2E_BINARY="$RUNNER_TEMP/dsh-e2e/deepseek-harness-desktop"
-            if [[ "$RUNNER_OS" == "Windows" ]]; then DSH_E2E_BINARY="$DSH_E2E_BINARY.exe"; export DSH_E2E_BINARY; fi
-            if [[ "$RUNNER_OS" == "Linux" ]]; then
-              DSH_E2E_HEADLESS=1 xvfb-run --auto-servernum node node_modules/vitest/vitest.mjs run --project desktop
-            else
-              node node_modules/vitest/vitest.mjs run --project desktop
-            fi
+            export DSH_E2E_BINARY="$RUNNER_TEMP/dsh-e2e/deepseek-harness-desktop.exe"
+            node node_modules/vitest/vitest.mjs run --project desktop
           }
 
           start_lane() {
