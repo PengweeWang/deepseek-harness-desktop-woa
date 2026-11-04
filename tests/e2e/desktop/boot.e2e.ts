@@ -27,7 +27,9 @@ interface HealthCheck {
 const app = shellAppScope()
 
 beforeAll(async () => {
-  await completePreinstall(app.get().window.page, ASSEMBLY_TIMEOUT_MS)
+  const page = app.get().window.page
+  await completePreinstall(page, ASSEMBLY_TIMEOUT_MS)
+  await waitHealthy(page, ASSEMBLY_TIMEOUT_MS)
 }, ASSEMBLY_TIMEOUT_MS)
 
 /**
@@ -38,7 +40,7 @@ beforeAll(async () => {
  * 认可的时机不同，切换档案、复用核心时会把「还没就绪」认成「已就绪」（issue #1384）。
  * 这里只做一件事——核心进程已退出时立刻失败，不把崩溃耗成超时。
  */
-async function waitHealthy(page: Page): Promise<HealthCheck> {
+async function waitHealthy(page: Page, timeoutMs = WINDOW_TIMEOUT_MS): Promise<HealthCheck> {
   let serviceUrl = ''
   await expect.poll(async () => {
     const info = await invoke<RuntimeInfo>(page, 'get_runtime_info')
@@ -54,7 +56,7 @@ async function waitHealthy(page: Page): Promise<HealthCheck> {
     // 是壳与 Core 共同认可的信号。核心进程退出已在上面快速失败，不会耗成超时。
     const health = await invoke<HealthCheck>(page, 'proxy_health_check')
     return health.status.startsWith('healthy')
-  }, { timeout: WINDOW_TIMEOUT_MS, message: 'Harness 核心未达到就绪状态' }).toBe(true)
+  }, { timeout: timeoutMs, message: 'Harness 核心未达到就绪状态' }).toBe(true)
   return { service_url: serviceUrl, status: `healthy - ${new URL(serviceUrl).origin}` }
 }
 
