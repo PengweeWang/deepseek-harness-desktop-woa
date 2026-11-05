@@ -1128,20 +1128,33 @@ mod tests {
             pnpm
         };
         let owner = new_process_owner();
-        let caller =
+        let mut caller =
             tokio::spawn(
                 async move { pnpm_major_version_at_bounded(&pnpm, None, None, owner).await },
             );
-        let pid = tokio::time::timeout(std::time::Duration::from_secs(15), async {
-            loop {
-                if let Some(pid) = super::super::super::process::active_plugin_pid(owner) {
-                    break pid;
+        let observed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            tokio::select! {
+                result = &mut caller => {
+                    panic!("probe finished before registering pid: {result:?}")
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                pid = async {
+                    loop {
+                        if let Some(pid) = super::super::super::process::active_plugin_pid(owner) {
+                            break pid;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                } => pid,
             }
         })
-        .await
-        .unwrap();
+        .await;
+        let pid = observed.unwrap_or_else(|_| {
+            panic!(
+                "probe did not register pid within 15s (caller finished: {}, cleanup: {:?})",
+                caller.is_finished(),
+                super::super::super::process::process_cleanup_failure(owner)
+            )
+        });
         caller.abort();
         assert!(caller.await.unwrap_err().is_cancelled());
         let retained_pid = super::super::super::process::active_plugin_pid(owner);
