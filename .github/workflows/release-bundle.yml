@@ -248,22 +248,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p upload
-          shopt -s nullglob
-          for dir in release-assets/*/; do
-            artifact="$(basename "$dir")"
-            suffix=""
-            case "$artifact" in
-              *macos-aarch64*) suffix="_aarch64" ;;
-              *macos-x86_64*) suffix="_x64" ;;
-              *windows*) suffix="_arm64" ;;
-            esac
-            for file in "$dir"*; do
-              [ -f "$file" ] || continue
-              base="$(basename "$file")"
-              ext="${base##*.}"
-              cp "$file" "upload/Deepseek.Harness.Desktop_Bundle_${VERSION}${suffix}.${ext}"
-            done
-          done
+          find release-assets -type f -print | sort
+          while IFS= read -r -d '' file; do
+            cp "$file" "upload/Deepseek.Harness.Desktop_Bundle_${VERSION}_arm64.exe"
+          done < <(find release-assets -type f -name '*.exe' -print0)
           find upload -type f -print | sort
 
       - name: Verify offline installers
@@ -309,7 +297,7 @@ jobs:
           {
             echo "### Offline bundle assets"
             echo
-            echo "Bundled core: \`$DSH_TAG\` · resources mapped to \`\$Resources/{node,pnpm,dsh}\`"
+            echo "Bundled core: \`$DSH_TAG\` · resources mapped to \`\$Resources/{pnpm,dsh}\`"
             echo
             for asset in "${assets[@]}"; do
               echo "- \`$(basename "$asset")\`"
