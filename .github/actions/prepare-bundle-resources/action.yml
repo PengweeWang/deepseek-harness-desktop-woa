@@ -125,22 +125,11 @@ runs:
         while IFS='|' read -r key name url sha sha_url; do
           [ -n "${key:-}" ] || continue
           case "$key" in
-            node) node_name="$name"; node_url="$url"; node_sha_url="$sha_url" ;;
             dsh) dsh_name="$name"; dsh_url="$url" ;;
             pnpm) pnpm_name="$name"; pnpm_url="$url"; pnpm_sha="$sha" ;;
             git) git_name="$name"; git_url="$url"; git_sha="$sha" ;;
           esac
         done < <(node scripts/bundle-metadata.mjs --assets --platform "$PLATFORM" --arch "$ARCH" $git_flag)
-
-        # Node.js 运行时：摘要取自官方 SHASUMS256.txt，与 assets 同源同版本。
-        fetch "$node_url" "${workdir}/${node_name}"
-        fetch "$node_sha_url" "${workdir}/SHASUMS256.txt"
-        verify "${workdir}/${node_name}" \
-          "$(awk -v asset="${node_name}" '$2 == asset { print $1 }' "${workdir}/SHASUMS256.txt")" \
-          "Node.js ${node_name}"
-        extract "${workdir}/${node_name}" "${workdir}/node"
-        flatten "${workdir}/node"
-        install_tree "${workdir}/node" "apps/desktop/src-tauri/resources/node"
 
         # dsh 内核：摘要来自同一 release 的 GitHub API，缺失即中止（无法校验完整性的
         # 内容不进离线包）。
@@ -181,11 +170,6 @@ runs:
         # 入口路径必须与清单 `dependencies.<key>.entry` 一致：解压层级（flatten）
         # 或资产布局变化会让应用在启动时判定「依赖缺失」并转去联网下载。
         entries="pnpm/bin/pnpm.cjs dsh/node_modules/@deepseek-ai/dsh/lib/bin.js"
-        if [ "$PLATFORM" != "windows" ]; then
-          entries="node/bin/node $entries"
-        else
-          entries="node/node.exe $entries"
-        fi
         # 清单没有指向 `$Resources/git` 时不能要求它存在（默认就不随包 MinGit）。
         if grep -q '"managedRoot": "$Resources/git"' apps/desktop/src-tauri/resources/manifest.jsonc; then
           entries="$entries git/cmd/git.exe"
@@ -201,6 +185,6 @@ runs:
 
         grep -q '"$Resources/' apps/desktop/src-tauri/resources/manifest.jsonc
         echo "--- bundled resources ---"
-        du -sh apps/desktop/src-tauri/resources/node apps/desktop/src-tauri/resources/dsh apps/desktop/src-tauri/resources/pnpm 2>/dev/null || true
+        du -sh apps/desktop/src-tauri/resources/dsh apps/desktop/src-tauri/resources/pnpm 2>/dev/null || true
         [ -d apps/desktop/src-tauri/resources/git ] && du -sh apps/desktop/src-tauri/resources/git || true
         sed -n '/"dependencies"/,/^  }/p' apps/desktop/src-tauri/resources/manifest.jsonc

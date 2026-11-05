@@ -10,12 +10,11 @@ export interface BundleAsset {
   url: string
   /** 构建期已知的固定摘要；需要单独下载摘要文件时为空字符串 */
   sha256: string
-  /** 摘要文件地址（Node 官方 SHASUMS256.txt）；有固定摘要时为空字符串 */
+  /** 摘要文件地址；有固定摘要时为空字符串 */
   sha256Url: string
 }
 
 export interface BundleAssets {
-  node: BundleAsset
   pnpm: BundleAsset
   dsh: BundleAsset
   /** 仅 Windows 随包（MinGit） */
@@ -23,8 +22,6 @@ export interface BundleAssets {
 }
 
 export interface BundleConstants {
-  nodeVersion: string
-  nodeBaseUrl: string
   pnpmVersion: string
   pnpmBaseUrl: string
   pnpmSha256: string
@@ -46,8 +43,6 @@ export function stripJsonc(raw: string): string
 export function readManifest(repo?: string): Record<string, unknown>
 
 export function parseVersionFromTag(tag: unknown): string | null
-
-export function nodeAssetName(platform: BundlePlatform, arch: BundleArch, version: string): string
 
 export function dshAssetName(platform: BundlePlatform, arch: BundleArch): string
 

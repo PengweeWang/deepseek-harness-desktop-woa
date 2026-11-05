@@ -39,15 +39,14 @@ it('reads bundle metadata and rewrites bundled roots in the desktop workspace', 
     const file = path.join(desktop, 'resources/manifest.jsonc')
     writeFileSync(file, JSON.stringify({
       engines: { dsh: { minimum: '0.2.1-rc.1' } },
-      dependencies: { node: {}, pnpm: {}, dsh: {}, git: { managedRoot: 'unchanged' } },
+      dependencies: { pnpm: {}, dsh: {}, git: { managedRoot: 'unchanged' } },
     }))
-    const constants = ['NODE_VERSION', 'NODE_BASE_URL', 'PNPM_VERSION', 'PNPM_BASE_URL', 'PNPM_SHA256', 'MINGIT_VERSION', 'MINGIT_BASE_URL', 'MINGIT_X64_SHA256', 'MINGIT_ARM64_SHA256', 'DSH_CORE_URL']
+    const constants = ['PNPM_VERSION', 'PNPM_BASE_URL', 'PNPM_SHA256', 'MINGIT_VERSION', 'MINGIT_BASE_URL', 'MINGIT_X64_SHA256', 'MINGIT_ARM64_SHA256', 'DSH_CORE_URL']
     writeFileSync(path.join(desktop, 'src/config/constants.rs'), constants.map(name => `pub const ${name}: &str = "${name}";`).join('\n'))
 
-    expect(readBuildConstants(repo)).toMatchObject({ nodeVersion: 'NODE_VERSION', pnpmSha256: 'PNPM_SHA256', dshCoreUrl: 'DSH_CORE_URL' })
+    expect(readBuildConstants(repo)).toMatchObject({ pnpmVersion: 'PNPM_VERSION', pnpmSha256: 'PNPM_SHA256', dshCoreUrl: 'DSH_CORE_URL' })
     expect(applyBundleManifest({ repo, platform: 'windows' }).file).toBe(file)
     expect(JSON.parse(readFileSync(file, 'utf8')).dependencies).toEqual({
-      node: { managedRoot: '$Resources/node', overridable: false },
       pnpm: { managedRoot: '$Resources/pnpm', overridable: false },
       dsh: { managedRoot: '$Resources/dsh', overridable: true },
       git: { managedRoot: 'unchanged' },

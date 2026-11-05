@@ -12,7 +12,7 @@ const DSH_LATEST_DOWNLOAD_SEGMENT = 'releases/latest/download/'
 const RESOURCES_TOKEN = '$Resources'
 
 /** 随包资源目录名（= `src-tauri/resources/<dir>`，也是清单 `$Resources/<dir>` 的落点）。 */
-const BUNDLED_DIRS = { node: 'node', pnpm: 'pnpm', dsh: 'dsh', git: 'git' }
+const BUNDLED_DIRS = { pnpm: 'pnpm', dsh: 'dsh', git: 'git' }
 
 function bundleError(message, cause) {
   const error = new Error(`BUNDLE_METADATA: ${message}`)
@@ -133,13 +133,6 @@ export function parseVersionFromTag(tag) {
   return rest.length > 0 ? rest : null
 }
 
-/** Node.js 官方发行包资产名（与 `config::runtime::node_pkg_filename` 一致）。 */
-export function nodeAssetName(platform, arch, version) {
-  const os = platform === 'macos' ? 'darwin' : platform === 'windows' ? 'win' : 'linux'
-  const ext = platform === 'windows' ? 'zip' : 'tar.gz'
-  return `node-v${version}-${os}-${arch}.${ext}`
-}
-
 /** deepseek-harness-pkg 发行资产名（与 `config::runtime::dsh_pkg_asset_filename` 一致）。 */
 export function dshAssetName(platform, arch) {
   if (platform === 'windows')
@@ -158,7 +151,7 @@ export function mingitAssetName(arch, version) {
   throw bundleError(`MinGit is not available for windows ${arch}`)
 }
 
-/** 收集仓库内的构建常量（Node / pnpm / MinGit 与各自的下载前缀）。 */
+/** 收集仓库内的构建常量（pnpm / MinGit 与各自的下载前缀）。 */
 export function readBuildConstants(repo = process.cwd()) {
   const constantsPath = path.join(repo, 'apps/desktop/src-tauri', 'src', 'config', 'constants.rs')
   let source
@@ -169,8 +162,6 @@ export function readBuildConstants(repo = process.cwd()) {
     throw bundleError(`cannot read ${constantsPath}`, error)
   }
   return {
-    nodeVersion: readRustStringConst(source, 'NODE_VERSION').replace(/^v/, ''),
-    nodeBaseUrl: readRustStringConst(source, 'NODE_BASE_URL'),
     pnpmVersion: readRustStringConst(source, 'PNPM_VERSION'),
     pnpmBaseUrl: readRustStringConst(source, 'PNPM_BASE_URL'),
     pnpmSha256: readRustStringConst(source, 'PNPM_SHA256'),
@@ -185,12 +176,12 @@ export function readBuildConstants(repo = process.cwd()) {
 /**
  * 随包依赖键。
  *
- * 默认只随包 Node / pnpm / 内核三项：MinGit 约 35 MiB，而绝大多数 Windows 机器已有
+ * 默认只随包 pnpm / 内核两项：MinGit 约 35 MiB，而绝大多数 Windows 机器已有
  * 可用的系统 Git，内网补装又必然失败（应用侧据「随包资源」构建放宽 Git 就绪判定，
  * 见 `config::dependencies::is_bundled_install`）。确有需要时用 `--with-git` 显式开启。
  */
 export function bundleTargets(platform, { withGit = false } = {}) {
-  const keys = ['node', 'pnpm', 'dsh']
+  const keys = ['pnpm', 'dsh']
   if (platform === 'windows' && withGit)
     keys.push('git')
   return keys
@@ -199,20 +190,12 @@ export function bundleTargets(platform, { withGit = false } = {}) {
 /**
  * 按平台/架构列出离线包需要下载的全部资产。
  *
- * `sha256` 为构建期已知的固定摘要（pnpm / MinGit，取自 constants.rs），`sha256Url`
- * 为需要单独下载的摘要来源（Node 官方 SHASUMS256.txt）；dsh 的摘要在下载后经
- * GitHub Release API 读取（见 workflow）。
+ * `sha256` 为构建期已知的固定摘要（pnpm / MinGit，取自 constants.rs）；dsh 的摘要
+ * 在下载后经 GitHub Release API 读取（见 workflow）。
  */
 export function bundleAssets({ platform, arch, constants, dshTag, withGit = false }) {
-  const nodeName = nodeAssetName(platform, arch, constants.nodeVersion)
   const dshName = dshAssetName(platform, arch)
   const assets = {
-    node: {
-      name: nodeName,
-      url: `${constants.nodeBaseUrl}v${constants.nodeVersion}/${nodeName}`,
-      sha256: '',
-      sha256Url: `${constants.nodeBaseUrl}v${constants.nodeVersion}/SHASUMS256.txt`,
-    },
     pnpm: {
       name: `pnpm-${constants.pnpmVersion}.tgz`,
       url: `${constants.pnpmBaseUrl}pnpm-${constants.pnpmVersion}.tgz`,
@@ -393,7 +376,6 @@ async function main() {
 
   const dshTag = await resolveLatestStableDshTag()
   appendOutputs(process.env.GITHUB_OUTPUT, {
-    node_version: constants.nodeVersion,
     pnpm_version: constants.pnpmVersion,
     mingit_version: constants.mingitVersion,
     dsh_tag: dshTag,
