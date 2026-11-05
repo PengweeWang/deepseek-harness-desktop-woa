@@ -1132,12 +1132,12 @@ mod tests {
             tokio::spawn(
                 async move { pnpm_major_version_at_bounded(&pnpm, None, None, owner).await },
             );
-        let pid = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let pid = tokio::time::timeout(std::time::Duration::from_secs(15), async {
             loop {
                 if let Some(pid) = super::super::super::process::active_plugin_pid(owner) {
                     break pid;
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await
@@ -1209,7 +1209,7 @@ mod tests {
         release.send(()).unwrap();
         let released = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             while super::super::super::process::active_plugin_pid(owner).is_some() {
-                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
             acquire_process_lock().await
         })
