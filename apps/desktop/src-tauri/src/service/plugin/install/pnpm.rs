@@ -1132,7 +1132,7 @@ mod tests {
             tokio::spawn(
                 async move { pnpm_major_version_at_bounded(&pnpm, None, None, owner).await },
             );
-        let pid = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let pid = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 if let Some(pid) = super::super::super::process::active_plugin_pid(owner) {
                     break pid;

@@ -371,9 +371,14 @@ jobs:
           pids=()
 
           rust_lane() {
-            # WoA runner 上并行用例会争用插件进程锁（锁是进程级全局状态），
-            # 使 pnpm 探测类用例的 2s 观察窗口与 10s 预算连锁失败；单线程规避。
-            ( cd apps/desktop/src-tauri && RUST_TEST_THREADS=1 cargo test --all-features --locked ) || return 1
+            # 插件进程锁是进程级全局状态：其它用例遗留的探测任务会让 pnpm 探测
+            # 用例的观察窗口超时并连锁污染后续用例。pnpm 模块先单独起一轮进程跑完，
+            # 其余用例再排除它执行，避免跨用例的全局状态串扰。
+            (
+              cd apps/desktop/src-tauri || exit 1
+              cargo test --all-features --locked --lib service::plugin::install::pnpm::tests -- --test-threads=1 || exit 1
+              cargo test --all-features --locked --lib -- --test-threads=1 --skip=service::plugin::install::pnpm::tests
+            ) || return 1
             if [[ "$RUNNER_OS" == "Windows" ]]; then
               cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features || return 1
             fi
