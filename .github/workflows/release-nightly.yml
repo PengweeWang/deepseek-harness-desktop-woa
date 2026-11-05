@@ -134,7 +134,7 @@ jobs:
           title="Nightly ${day:0:4}-${day:4:2}-${day:6:2} (${NIGHTLY_SHA:0:7})"
 
           if gh release view "$NIGHTLY_TAG" >/dev/null 2>&1; then
-            # 当天已经发布过：构建期间原样保留，等 WOA 构建成功后再由 finalize 更新，
+            # 当天已经发布过：构建期间原样保留，等三个平台都构建成功后再由 finalize 更新，
             # 避免构建失败时把已发布的 Release 打回草稿。
             if [ "$(gh release view "$NIGHTLY_TAG" --json isDraft -q .isDraft)" != "true" ]; then
               echo "::notice::$NIGHTLY_TAG 已经是已发布状态，构建期间原样保留。"
@@ -160,8 +160,25 @@ jobs:
             --title "$title" --prerelease --notes-file draft_notes.md
           gh release edit "$NIGHTLY_TAG" --title "$title" --notes-file draft_notes.md
 
+  build-macos:
+    name: Build macOS Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
   build-windows:
-    name: Build Windows ARM64 Artifacts
+    name: Build Windows Artifacts
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
     uses: ./.github/workflows/build-windows.yml
@@ -172,13 +189,27 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+  build-linux:
+    name: Build Linux Artifacts
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
   finalize:
     name: Publish Nightly Release
-    needs: [prepare, build-windows]
+    needs: [prepare, build-macos, build-windows, build-linux]
     if: >-
       always() && needs.prepare.result == 'success' &&
       needs.prepare.outputs.should_build == 'true' &&
-      needs.build-windows.result == 'success'
+      needs.build-macos.result == 'success' &&
+      needs.build-windows.result == 'success' &&
+      needs.build-linux.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -205,7 +236,7 @@ jobs:
             exit 1
           }
 
-      # WOA 构建成功后才移动日期 tag、生成变更日志：构建失败时已发布的 Release
+      # 三个平台都构建成功后才移动日期 tag、生成变更日志：构建失败时已发布的 Release
       # 及其 tag 保持原样。
       - name: Point dated nightly tag at this commit
         uses: actions/github-script@v8
@@ -295,7 +326,11 @@ jobs:
             echo
             # 与正式版（release.yml 的 Append Artifacts section）保持同一份产物清单
             echo '### 📦 Artifacts'
-            echo '- **Windows on ARM (ARM64)**: 下载 `_arm64-setup.exe` 或 `_arm64_*.msi`'
+            echo '- **macOS (Apple Silicon)**: 下载 `aarch64.dmg`'
+            echo '- **macOS (Intel)**: 下载 `x64.dmg`'
+            echo '- **Windows**: 下载 `.exe`'
+            echo '- **Linux (x64)**: 下载 `.AppImage` 或 `.deb`（基于 Ubuntu 22.04 构建）'
+            echo '- **Linux (ARM64)**: 下载 `aarch64.AppImage` 或 `arm64.deb`（基于 Ubuntu 22.04 构建，GLIBC 符号上限 2.35）'
             echo
             echo '> 文件名带 `_Bundle` 后缀的是**离线捆绑包**：安装包里已内置 Node.js 运行时、pnpm'
             echo '> 与打包好的 dsh 内核，首次启动无需联网即可直接运行。不带该后缀的是常规安装包，'
@@ -354,7 +389,7 @@ jobs:
             const path = require('node:path');
             const files = fs.readdirSync(path.join(process.env.RUNNER_TEMP, 'release-assets'), { recursive: true, withFileTypes: true });
             const keep = new Set(files.filter(file => file.isFile()).map(file => file.name));
-            const nightlyAsset = /^Deepseek\.Harness\.Desktop_0\.0\.0(?:-nightly(?:\.[0-9A-Za-z-]+)*)?_[^/\\]+\.(?:exe|msi)(?:\.sig)?$/;
+            const nightlyAsset = /^Deepseek\.Harness\.Desktop_0\.0\.0(?:-nightly(?:\.[0-9A-Za-z-]+)*)?_[^/\\]+\.(?:exe|msi|dmg|AppImage|deb)(?:\.sig)?$/;
             for (const tag of [process.env.NIGHTLY_TAG, 'nightly']) {
               const { data: release } = await github.rest.repos.getReleaseByTag({ ...context.repo, tag });
               const assets = await github.paginate(github.rest.repos.listReleaseAssets, { ...context.repo, release_id: release.id, per_page: 100 });

@@ -16,11 +16,23 @@ on:
       - apps/desktop/src-tauri/tauri.conf.json
   # 手动触发：创建预发布测试构建。
   workflow_dispatch:
+    inputs:
+      platform_filter:
+        description: 选择需要打包的平台
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - macos-aarch64
+          - macos-x86_64
+          - windows
+          - linux
 
 permissions:
   contents: write
 
-# 同一 tag/PR 的重复运行整体排队，构建完成后再串行写 Release。
+# 同一 tag/PR 的重复运行整体排队，平台内部再通过 needs 链串行写 Release。
 concurrency:
   group: release-workflow-${{ github.ref }}
   cancel-in-progress: false
@@ -100,7 +112,14 @@ jobs:
           cat << 'EOF' >> release_notes.md
 
           ### 📦 Artifacts
-          - **Windows on ARM (ARM64)**: 下载 `_arm64-setup.exe` 或 `_arm64_*.msi`
+          - **macOS (Apple Silicon)**: 下载 `aarch64.dmg`
+          - **macOS (Intel)**: 下载 `x64.dmg`
+          - **Windows**: 下载 `.exe`
+          - **Linux (x64)**: 下载 `.AppImage` 或 `.deb`（基于 Ubuntu 22.04 构建）
+          - **Linux (ARM64)**: 下载 `aarch64.AppImage` 或 `arm64.deb`（基于 Ubuntu 22.04 构建，GLIBC 符号上限 2.35）
+          - **Android**: 桌面端发布后追加 `.apk`；未配置签名密钥时使用开发证书，仅供评估
+          - **iOS（Testflight）**: 打开 [TestFlight 邀请链接](https://testflight.apple.com/join/kYXkpnp1)，通过 beta 测试安装
+          - **iOS（IPA）**: 桌面端发布后追加 `_unsigned.ipa`；需自行签名，不能直接安装
 
           > 文件名带 `_Bundle` 后缀的是**离线捆绑包**：安装包里已内置 Node.js 运行时、pnpm
           > 与打包好的 dsh 内核，首次启动无需联网即可直接运行。不带该后缀的是常规安装包，
@@ -108,9 +127,36 @@ jobs:
           EOF
           gh release edit "$RELEASE_TAG" --notes-file release_notes.md
 
-  build-windows:
-    name: Build Windows ARM64 Artifacts
+  # 三个平台只构建 Actions artifacts，互不写 GitHub Release，因此可以完全并行。
+  build-macos:
+    name: Build macOS Artifacts
     needs: prepare
+    if: >-
+      needs.prepare.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.platform_filter == 'all' ||
+       startsWith(inputs.platform_filter, 'macos-'))
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      platform_filter: ${{ github.event_name == 'workflow_dispatch' && inputs.platform_filter || 'all' }}
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  build-windows:
+    name: Build Windows Artifacts
+    needs: prepare
+    if: >-
+      needs.prepare.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.platform_filter == 'all' ||
+       inputs.platform_filter == 'windows')
     uses: ./.github/workflows/build-windows.yml
     with:
       source_ref: ${{ needs.prepare.outputs.source_ref }}
@@ -118,13 +164,35 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-  # 单一 writer 下载构建产物，一次性上传并发布 Release。
+  build-linux:
+    name: Build Linux Artifacts
+    needs: prepare
+    if: >-
+      needs.prepare.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.platform_filter == 'all' ||
+       inputs.platform_filter == 'linux')
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+  # 单一 writer 下载全部成功构建的产物，一次性上传并发布 Release。
   finalize:
     name: Publish GitHub Release
-    needs: [prepare, build-windows]
+    needs: [prepare, build-macos, build-windows, build-linux]
     if: >-
       always() && needs.prepare.result == 'success' &&
-      needs.build-windows.result == 'success'
+      ((github.event_name != 'workflow_dispatch' &&
+        needs.build-macos.result == 'success' &&
+        needs.build-windows.result == 'success' &&
+        needs.build-linux.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' &&
+        (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
+        (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') &&
+        (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped')))
     runs-on: ubuntu-latest
     steps:
       - name: Download build outputs
@@ -157,7 +225,7 @@ jobs:
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           if [ "$PRERELEASE" = "true" ]; then
             # 预发布（semver pre-release 与 workflow_dispatch 的 test-* 构建）在放开草稿前
-            # 统一前置一段升级警告：finalize 是 Release 的单一 writer，各入口的说明
+            # 统一前置一段升级警告：finalize 是 Release 的单一 writer，各平台/各入口的说明
             # 都汇聚到这里；重跑 finalize 时用特征串判重，避免警告被叠加多次。
             gh release view "$RELEASE_TAG" --json body -q .body > release_notes.md
             if ! grep -q '预发布版本' release_notes.md; then

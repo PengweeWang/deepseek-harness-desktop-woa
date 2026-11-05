@@ -1,0 +1,205 @@
+name: Reusable macOS Offline Bundle Build
+
+on:
+  workflow_call:
+    inputs:
+      platform_filter:
+        required: false
+        type: string
+        default: all
+      source_ref:
+        required: true
+        type: string
+      dsh_tag:
+        required: true
+        type: string
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+      APPLE_CERTIFICATE:
+        required: true
+      APPLE_CERTIFICATE_PASSWORD:
+        required: true
+      APPLE_ID:
+        required: true
+      APPLE_PASSWORD:
+        required: true
+      APPLE_TEAM_ID:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build offline bundle (${{ matrix.id }})
+    # 同 build-macos.yml：架构必须与 runner 一致，否则原生可选依赖会漏装（issue #1326）。
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macos-aarch64
+            target: aarch64-apple-darwin
+            arch: arm64
+            runner: macos-26
+          - id: macos-x86_64
+            target: x86_64-apple-darwin
+            arch: x64
+            runner: macos-26-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    steps:
+      - name: Filter target architecture
+        id: check
+        shell: bash
+        env:
+          PLATFORM_FILTER: ${{ inputs.platform_filter }}
+          PLATFORM_ID: ${{ matrix.id }}
+        run: |
+          should_run=true
+          if [ "$PLATFORM_FILTER" != "all" ] && [ "$PLATFORM_FILTER" != "$PLATFORM_ID" ]; then
+            should_run=false
+          fi
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - name: Setup Xcode
+        if: steps.check.outputs.should_run == 'true'
+        uses: ./.github/actions/setup-xcode
+
+      - name: Setup Node.js and pnpm
+        if: steps.check.outputs.should_run == 'true'
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install Rust stable
+        if: steps.check.outputs.should_run == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        if: steps.check.outputs.should_run == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare bundled resources
+        if: steps.check.outputs.should_run == 'true'
+        uses: ./.github/actions/prepare-bundle-resources
+        with:
+          platform: macos
+          arch: ${{ matrix.arch }}
+          dsh-tag: ${{ inputs.dsh_tag }}
+
+      - name: Validate signing secrets
+        if: steps.check.outputs.should_run == 'true'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -z "${!name}" ] && missing+=("$name")
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::Missing macOS signing secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Route hdiutil through the flake buffer
+        if: steps.check.outputs.should_run == 'true'
+        shell: bash
+        # runner 上 hdiutil 会随机报 Resource busy / DiskArbitration 超时
+        # (actions/runner-images#7522)，把带重试的同名包装排到 PATH 前面。
+        run: |
+          chmod +x scripts/hdiutil-retry/hdiutil
+          echo "$PWD/scripts/hdiutil-retry" >> "$GITHUB_PATH"
+
+      # 必须同时产出 app：只给 `--bundles dmg` 时 tauri 会把 .app 当中间产物，打完 dmg
+      # 就删掉它（日志里的 `Cleaning .../bundle/macos/<name>.app`），后面的签名/公证
+      # 校验步骤便找不到目标。普通安装包不带 --bundles、走 targets: all，两者都产出。
+      - name: Build offline package
+        if: steps.check.outputs.should_run == 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        # 公证（notarize）走 appstoreconnect.apple.com，runner 偶发 NSURLErrorDomain
+        # -1009 "offline" 直接让整次打包失败。代码签名与产物就绪都不是原因，重试即可
+        # 规避；只有非网络类失败才立刻放弃，避免把真实错误耗成多次重试。
+        run: |
+          for attempt in 1 2 3; do
+            log="tauri-build-$attempt.log"
+            if pnpm tauri build --target ${{ matrix.target }} --bundles app,dmg --config src-tauri/tauri.macos-bundle.conf.json 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ] || ! grep -Eq 'Notariz|notarize|NSURLError|Internet connection appears to be offline|codesign' "$log"; then
+              exit 1
+            fi
+            echo "::warning::notarization/reachability failure on attempt $attempt; retrying"
+            sleep 30
+          done
+          exit 1
+
+      - name: Verify signature and notarization
+        if: steps.check.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          app_path="$(find "apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos" -type d -name '*.app' -print -quit)"
+          if [ -z "$app_path" ]; then
+            echo '::error::Built macOS app bundle was not found'
+            exit 1
+          fi
+          inner_apps=("$app_path"/Contents/Resources/runtime/darwin-*/*.app)
+          [ "${#inner_apps[@]}" -eq 1 ]
+          inner_app="${inner_apps[0]}"
+          for framework in "Electron Framework" Mantle ReactiveObjC Squirrel; do
+            for link in "$framework" Resources Versions/Current; do
+              path="$inner_app/Contents/Frameworks/$framework.framework/$link"
+              if [ ! -L "$path" ]; then
+                echo "::error::Framework symlink was not preserved: $path"
+                exit 1
+              fi
+            done
+          done
+          codesign --verify --deep --strict --verbose=2 "$inner_app"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          xcrun stapler validate "$app_path"
+          spctl --assess --type execute --verbose=4 "$app_path"
+          # 原生可选依赖按宿主平台落盘，交叉编译会漏掉目标架构那一份（issue #1326）。
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) oxide=oxide-darwin-arm64 ;;
+            *) oxide=oxide-darwin-x64 ;;
+          esac
+          binding="$(find "$app_path/Contents/Resources/resources/node_modules/@tailwindcss/$oxide" -name '*.node' -print -quit)"
+          if [ -z "$binding" ]; then
+            echo "::error::@tailwindcss/$oxide is missing for ${{ matrix.target }}; the app cannot load its native binding"
+            exit 1
+          fi
+
+      # 已知限制：.app 若被拖进 /Applications 且不属于当前用户（或来自下载的只读卷），
+      # 随包 dsh 内核同样不可写，桌面端启动时的插件入口链接会失败。用户目录自持的
+      # .app 不受影响。
+      - name: Upload build output
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-bundle-${{ matrix.id }}
+          path: apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7

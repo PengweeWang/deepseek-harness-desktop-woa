@@ -20,6 +20,17 @@ on:
     types: [completed]
   workflow_dispatch:
     inputs:
+      platform_filter:
+        description: 选择需要打包的平台
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - macos-aarch64
+          - macos-x86_64
+          - windows
+          - linux
       tag:
         description: 目标 release tag（留空 = 发测试预发布；指定时需从该 tag 的提交触发）
         required: false
@@ -32,7 +43,7 @@ on:
         type: boolean
 
 permissions:
-  # 写权限只给真正上传产物的 finalize；prepare 与可复用构建只需要读。
+  # 写权限只给真正上传产物的 finalize；prepare 与三个可复用构建只需要读。
   contents: read
 
 concurrency:
@@ -194,12 +205,38 @@ jobs:
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           node scripts/bundle-metadata.mjs
 
-  build-windows:
-    name: Build Windows ARM64 Offline Bundle
+  build-macos:
+    name: Build macOS Offline Bundle
     needs: prepare
     if: >-
       needs.prepare.result == 'success' &&
-      needs.prepare.outputs.should_build == 'true'
+      needs.prepare.outputs.should_build == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.platform_filter == 'all' ||
+       startsWith(inputs.platform_filter, 'macos-'))
+    uses: ./.github/workflows/build-bundle-macos.yml
+    with:
+      platform_filter: ${{ github.event_name == 'workflow_dispatch' && inputs.platform_filter || 'all' }}
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  build-windows:
+    name: Build Windows Offline Bundle
+    needs: prepare
+    if: >-
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.platform_filter == 'all' ||
+       inputs.platform_filter == 'windows')
     uses: ./.github/workflows/build-bundle-windows.yml
     with:
       source_ref: ${{ needs.prepare.outputs.source_ref }}
@@ -209,13 +246,37 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+  build-linux:
+    name: Build Linux Offline Bundle
+    needs: prepare
+    if: >-
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.should_build == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.platform_filter == 'all' ||
+       inputs.platform_filter == 'linux')
+    uses: ./.github/workflows/build-bundle-linux.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
   finalize:
     name: Publish Offline Installers
-    needs: [prepare, build-windows]
+    needs: [prepare, build-macos, build-windows, build-linux]
     if: >-
       always() && needs.prepare.result == 'success' &&
       needs.prepare.outputs.should_build == 'true' &&
-      needs.build-windows.result == 'success'
+      ((github.event_name != 'workflow_dispatch' &&
+        needs.build-macos.result == 'success' &&
+        needs.build-windows.result == 'success' &&
+        needs.build-linux.result == 'success') ||
+       (github.event_name == 'workflow_dispatch' &&
+        (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
+        (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') &&
+        (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped')))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -226,8 +287,9 @@ jobs:
           pattern: release-bundle-*
           path: release-assets
 
-      # 统一命名为 Deepseek.Harness.Desktop_Bundle_<version>_arm64.<ext>，
-      # 与普通安装包区分并标明 WOA 架构。
+      # 统一命名为 Deepseek.Harness.Desktop_Bundle_<version>.<ext>：与普通安装包
+      # （Tauri 默认名）区分，且同一 release 内不会重名。macOS 两个架构的产物
+      # 扩展名相同，必须带架构后缀才不会互相覆盖。
       - name: Rename offline installers
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -239,7 +301,8 @@ jobs:
             artifact="$(basename "$dir")"
             suffix=""
             case "$artifact" in
-              *windows-aarch64*) suffix="_arm64" ;;
+              *macos-aarch64*) suffix="_aarch64" ;;
+              *macos-x86_64*) suffix="_x64" ;;
             esac
             for file in "$dir"*; do
               [ -f "$file" ] || continue
