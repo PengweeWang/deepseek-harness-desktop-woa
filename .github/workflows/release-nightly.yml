@@ -160,23 +160,6 @@ jobs:
             --title "$title" --prerelease --notes-file draft_notes.md
           gh release edit "$NIGHTLY_TAG" --title "$title" --notes-file draft_notes.md
 
-  build-macos:
-    name: Build macOS Artifacts
-    needs: prepare
-    if: needs.prepare.outputs.should_build == 'true'
-    uses: ./.github/workflows/build-macos.yml
-    with:
-      source_ref: ${{ needs.prepare.outputs.source_ref }}
-      version: ${{ needs.prepare.outputs.version }}
-    secrets:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-
   build-windows:
     name: Build Windows Artifacts
     needs: prepare
@@ -189,27 +172,13 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-  build-linux:
-    name: Build Linux Artifacts
-    needs: prepare
-    if: needs.prepare.outputs.should_build == 'true'
-    uses: ./.github/workflows/build-linux.yml
-    with:
-      source_ref: ${{ needs.prepare.outputs.source_ref }}
-      version: ${{ needs.prepare.outputs.version }}
-    secrets:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
   finalize:
     name: Publish Nightly Release
-    needs: [prepare, build-macos, build-windows, build-linux]
+    needs: [prepare, build-windows]
     if: >-
       always() && needs.prepare.result == 'success' &&
       needs.prepare.outputs.should_build == 'true' &&
-      needs.build-macos.result == 'success' &&
-      needs.build-windows.result == 'success' &&
-      needs.build-linux.result == 'success'
+      needs.build-windows.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -326,15 +295,11 @@ jobs:
             echo
             # 与正式版（release.yml 的 Append Artifacts section）保持同一份产物清单
             echo '### 📦 Artifacts'
-            echo '- **macOS (Apple Silicon)**: 下载 `aarch64.dmg`'
-            echo '- **macOS (Intel)**: 下载 `x64.dmg`'
-            echo '- **Windows**: 下载 `.exe`'
-            echo '- **Linux (x64)**: 下载 `.AppImage` 或 `.deb`（基于 Ubuntu 22.04 构建）'
-            echo '- **Linux (ARM64)**: 下载 `aarch64.AppImage` 或 `arm64.deb`（基于 Ubuntu 22.04 构建，GLIBC 符号上限 2.35）'
+            echo '- **Windows (ARM64)**: 下载 `.exe`'
             echo
-            echo '> 文件名带 `_Bundle` 后缀的是**离线捆绑包**：安装包里已内置 Node.js 运行时、pnpm'
-            echo '> 与打包好的 dsh 内核，首次启动无需联网即可直接运行。不带该后缀的是常规安装包，'
-            echo '> 首次启动时按需下载运行时依赖。'
+            echo '> 文件名带 `_Bundle` 后缀的是**离线捆绑包**：安装包里已内置 pnpm 与打包好的'
+            echo '> dsh 内核，首次启动无需联网即可直接运行。不带该后缀的是常规安装包，首次启动'
+            echo '> 时按需下载依赖。'
             echo
             echo "提交 \`$NIGHTLY_SHA\` · 构建时间 $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo

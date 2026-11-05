@@ -1,7 +1,7 @@
 name: Build & Release (Offline Bundle)
 
 # 离线安装包：在普通发布流程（release.yml）成功后追加一次带资源构建。
-# 产物把 Node.js 运行时、推荐 dsh 内核、pnpm 随安装包分发，并在构建期把
+# 产物把推荐 dsh 内核与 pnpm 随安装包分发，并在构建期把
 # `resources/manifest.jsonc` 的托管根改写成 `$Resources/...`，首次启动直接使用
 # 随包资源，全程不联网。只随包启动 dsh 必需的资源：MinGit 默认不携带（git 托管的
 # 能力在真正使用时才需要，`bundle_git` 可显式开启）。
@@ -27,10 +27,7 @@ on:
         type: choice
         options:
           - all
-          - macos-aarch64
-          - macos-x86_64
           - windows-arm64
-          - linux
       tag:
         description: 目标 release tag（留空 = 发测试预发布；指定时需从该 tag 的提交触发）
         required: false
@@ -205,29 +202,6 @@ jobs:
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           node scripts/bundle-metadata.mjs
 
-  build-macos:
-    name: Build macOS Offline Bundle
-    needs: prepare
-    if: >-
-      needs.prepare.result == 'success' &&
-      needs.prepare.outputs.should_build == 'true' &&
-      (github.event_name != 'workflow_dispatch' ||
-       inputs.platform_filter == 'all' ||
-       startsWith(inputs.platform_filter, 'macos-'))
-    uses: ./.github/workflows/build-bundle-macos.yml
-    with:
-      platform_filter: ${{ github.event_name == 'workflow_dispatch' && inputs.platform_filter || 'all' }}
-      source_ref: ${{ needs.prepare.outputs.source_ref }}
-      dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
-    secrets:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-
   build-windows:
     name: Build Windows Offline Bundle
     needs: prepare
@@ -246,37 +220,15 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-  build-linux:
-    name: Build Linux Offline Bundle
-    needs: prepare
-    if: >-
-      needs.prepare.result == 'success' &&
-      needs.prepare.outputs.should_build == 'true' &&
-      (github.event_name != 'workflow_dispatch' ||
-       inputs.platform_filter == 'all' ||
-       inputs.platform_filter == 'linux')
-    uses: ./.github/workflows/build-bundle-linux.yml
-    with:
-      source_ref: ${{ needs.prepare.outputs.source_ref }}
-      dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
-    secrets:
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
   finalize:
     name: Publish Offline Installers
-    needs: [prepare, build-macos, build-windows, build-linux]
+    needs: [prepare, build-windows]
     if: >-
       always() && needs.prepare.result == 'success' &&
       needs.prepare.outputs.should_build == 'true' &&
-      ((github.event_name != 'workflow_dispatch' &&
-        needs.build-macos.result == 'success' &&
-        needs.build-windows.result == 'success' &&
-        needs.build-linux.result == 'success') ||
+      ((github.event_name != 'workflow_dispatch' && needs.build-windows.result == 'success') ||
        (github.event_name == 'workflow_dispatch' &&
-        (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
-        (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') &&
-        (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped')))
+        (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped')))
     runs-on: ubuntu-latest
     permissions:
       contents: write

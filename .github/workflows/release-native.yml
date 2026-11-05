@@ -1,8 +1,5 @@
 name: Release Mobile Apps (Native)
 on:
-  workflow_run:
-    workflows: ['Build & Release']
-    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
