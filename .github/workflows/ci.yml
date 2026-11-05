@@ -230,30 +230,14 @@ jobs:
         run: |
           echo "unit tests not selected: ${{ needs.changes.outputs.reason }}"
 
-  # Rust 单测与桌面 CDP E2E 同一环境共用一次编译：pnpm install 只落宿主平台的
-  # 原生可选依赖，交叉架构跑会漏装另一侧（issue #1326），因此两个矩阵必须逐项同构。
-  # 合并前是两条独立 job，各自 checkout / install / 编译一遍，5 个平台白跑两轮。
+  # 本仓库只发布 Windows ARM64：Rust 单测与桌面 CDP E2E 统一在原生 WoA runner 上跑，
+  # 不再为其它平台各跑一轮（issue #1326 的交叉架构漏装问题也一并消失）。
   rust-e2e:
-    name: Rust tests & Desktop CDP E2E (${{ matrix.runner }})
-    # 指针不可达时直接跳过：5 个平台各自 Checkout 报一遍同样的 `not our ref`，只会把
-    # 一条环境问题放大成「整批全崩」（issue #1384）。
+    name: Rust tests & Desktop CDP E2E (Windows ARM64)
+    # 指针不可达时直接跳过，避免 Checkout 把子仓库问题伪装成测试失败（issue #1384）。
     needs: [pre_job, changes, submodules]
     if: ${{ needs.pre_job.outputs.should_skip != 'true' && (needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1' || needs.changes.outputs.desktop == '1') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            arch: x64
-          - runner: ubuntu-22.04-arm
-            arch: arm64
-          - runner: macos-26
-            arch: arm64
-          - runner: macos-26-intel
-            arch: x64
-          - runner: windows-latest
-            arch: x64
-    runs-on: ${{ matrix.runner }}
+    runs-on: windows-11-arm
     timeout-minutes: 90
     env:
       DSH_RUST_SCOPE: ${{ needs.changes.outputs.full == '1' || needs.changes.outputs.rust == '1' }}
@@ -271,28 +255,21 @@ jobs:
         with:
           submodules: true
 
-      # 标签写错（例如把 x64 指到 Apple Silicon）不会报错，只会在错误架构上跑出一份
-      # 看似通过的绿灯，这里把 runner.arch 与矩阵声明对齐。
+      # 标签写错不会报错，只会在错误架构上跑出一份看似通过的绿灯。
       - name: Verify runner architecture
         shell: bash
         run: |
-          case "${{ matrix.arch }}" in
-            x64) expected=X64 ;;
-            arm64) expected=ARM64 ;;
-            *) echo "::error::unknown matrix arch '${{ matrix.arch }}'"; exit 1 ;;
-          esac
-          if [ "${{ runner.arch }}" != "$expected" ]; then
-            echo "::error::${{ matrix.runner }} is ${{ runner.arch }}, matrix declares ${{ matrix.arch }}"
+          if [ "${{ runner.arch }}" != "ARM64" ]; then
+            echo "::error::windows-11-arm is ${{ runner.arch }}, expected ARM64"
             exit 1
           fi
           echo "runner arch OK: ${{ runner.arch }}"
 
-      # standalone 只解决 Windows 上找不到 pnpm.exe 的问题；@pnpm/exe 没有
-      # darwin-x64 的可用二进制（pnpm#11423），在 Intel macOS runner 上会直接装不上。
+      # standalone 解决 Windows 上找不到 pnpm.exe 的问题。
       - name: Setup Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
         with:
-          standalone: ${{ runner.os == 'Windows' }}
+          standalone: true
 
       - name: Expose pnpm.exe (Windows)
         if: runner.os == 'Windows'
@@ -311,26 +288,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Rust 侧 dbus / appindicator / patchelf，桌面端侧 GTK 与 headless 的 xvfb。
-      # 镜像站偶发 5xx / 半截连接：固定 3 次尝试并打印重试序号，够了就停；失败仍以
-      # 退出码失败，不静默降级（issue #1384）。
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get -o Acquire::Retries=3 update \
-              && sudo apt-get -y -o Acquire::Retries=3 install dbus libappindicator3-dev \
-                 librsvg2-dev patchelf libnss3 libatk-bridge2.0-0 libgtk-3-0 libgbm1 xvfb; then
-              echo "apt-get succeeded on attempt ${attempt}"
-              exit 0
-            fi
-            echo "::warning::apt-get attempt ${attempt}/3 failed; retrying in $((attempt * 10))s"
-            sleep $((attempt * 10))
-          done
-          echo "::error::apt-get failed after 3 attempts"
-          exit 1
-
       - name: Cache Electron distribution
         uses: actions/cache@v4
         with:
@@ -344,10 +301,6 @@ jobs:
       # 版本，rustup 组件下载与校验随之抖动，日志里表现为莫名的 checksum 失败重试。
       - name: Install Rust 1.98.1
         uses: dtolnay/rust-toolchain@1.98.1
-
-      - name: Setup Xcode
-        if: runner.os == 'macOS'
-        uses: ./.github/actions/setup-xcode
 
       # Rust 测试与桌面端都落在 apps/desktop/src-tauri/target；E2E 显式指定
       # --target-dir 复用同一份 cache，避免两份 target 缓存互相覆盖。
