@@ -45,6 +45,36 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # 交叉编译会同时触发宿主(x64)与目标(arm64)两份 Electron 下载；GitHub Release
+      # CDN 偶发 504，预先带重试落盘可避免构建脚本里的 curl 直接失败。
+      - name: Prefetch Electron runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^pub const DEFAULT_VERSION: &str = "\(.*\)";$/\1/p' crates/electron-rs/src/lib.rs)"
+          cache="$(cygpath -u "${LOCALAPPDATA:-$HOME/AppData/Local}")/electron/Cache"
+          mkdir -p "$cache"
+          for arch in win32-x64 win32-arm64; do
+            file="$cache/electron-v${version}-${arch}.zip"
+            [ -f "$file" ] && continue
+            for attempt in 1 2 3 4 5; do
+              if curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$file" \
+                "https://github.com/electron/electron/releases/download/v${version}/electron-v${version}-${arch}.zip"; then
+                break
+              fi
+              rm -f "$file"
+              echo "electron ${arch} download failed (attempt ${attempt}/5); retrying"
+              sleep 10
+            done
+            [ -f "$file" ] || { echo "::error::failed to prefetch electron ${arch}"; exit 1; }
+          done
+
+      - name: Cache Electron distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/electron/Cache
+          key: electron-rs-${{ runner.os }}-${{ runner.arch }}
+
       # windows-latest 默认 PowerShell，$STAMP_VERSION 会被当成本地变量读成空串；显式用 bash。
       - name: Stamp injected version
         if: inputs.version != ''
