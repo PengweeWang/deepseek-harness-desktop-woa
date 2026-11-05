@@ -799,6 +799,7 @@ mod tests {
         assert!(!url.contains("/releases/latest/download/"));
         assert!(
             url.ends_with("deepseek-harness-pkg-windows.zip")
+                || url.ends_with("deepseek-harness-pkg-windows-arm64.zip")
                 || url.ends_with("deepseek-harness-pkg-linux.zip")
                 || url.ends_with("deepseek-harness-pkg-linux-arm64.zip")
                 || url.ends_with("deepseek-harness-pkg-macos-arm64.zip")

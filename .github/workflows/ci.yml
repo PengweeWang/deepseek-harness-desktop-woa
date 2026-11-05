@@ -371,7 +371,9 @@ jobs:
           pids=()
 
           rust_lane() {
-            ( cd apps/desktop/src-tauri && cargo test --all-features --locked ) || return 1
+            # WoA runner 上并行用例会争用插件进程锁（锁是进程级全局状态），
+            # 使 pnpm 探测类用例的 2s 观察窗口与 10s 预算连锁失败；单线程规避。
+            ( cd apps/desktop/src-tauri && RUST_TEST_THREADS=1 cargo test --all-features --locked ) || return 1
             if [[ "$RUNNER_OS" == "Windows" ]]; then
               cargo test --manifest-path crates/tauri-plugin-notifications/Cargo.toml --lib --no-default-features || return 1
             fi
