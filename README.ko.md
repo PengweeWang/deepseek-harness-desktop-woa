@@ -92,7 +92,7 @@
 
 | 플랫폼 | 요구 사항 | 설치 프로그램 |
 | --- | --- | --- |
-| Windows | Windows 10+ (내장 Chromium 엔진) | x64 `.exe` / `.msi` |
+| Windows | Windows 10+ (내장 Chromium 엔진) | ARM64 `.exe` (NSIS) |
 | macOS | macOS 12+ (내장 Chromium 엔진) | Intel / Apple Silicon `.dmg` |
 | Linux | 내장 Chromium 엔진 | x64 `.AppImage` / `.deb` |
 

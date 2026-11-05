@@ -92,7 +92,7 @@
 
 | Платформа | Требования | Установщик |
 | --- | --- | --- |
-| Windows | Windows 10+ (встроенный движок Chromium) | x64 `.exe` / `.msi` |
+| Windows | Windows 10+ (встроенный движок Chromium) | ARM64 `.exe` (NSIS) |
 | macOS | macOS 12+ (встроенный движок Chromium) | Intel / Apple Silicon `.dmg` |
 | Linux | Встроенный движок Chromium | x64 `.AppImage` / `.deb` |
 

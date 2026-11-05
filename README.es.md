@@ -92,7 +92,7 @@ Descargá el instalador de tu plataforma y arquitectura desde [Releases](https:/
 
 | Plataforma | Requisitos | Instalador |
 | --- | --- | --- |
-| Windows | Windows 10+ (motor Chromium integrado) | x64 `.exe` / `.msi` |
+| Windows | Windows 10+ (motor Chromium integrado) | ARM64 `.exe` (NSIS) |
 | macOS | macOS 12+ (motor Chromium integrado) | Intel / Apple Silicon `.dmg` |
 | Linux | Motor Chromium integrado | x64 `.AppImage` / `.deb` |
 

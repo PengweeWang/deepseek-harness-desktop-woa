@@ -92,7 +92,7 @@ Download the installer for your platform and architecture from [Releases](https:
 
 | Platform | Requirements | Installer |
 | --- | --- | --- |
-| Windows | Windows 10+ (bundled Chromium engine) | x64 `.exe` / `.msi` |
+| Windows | Windows 10+ (bundled Chromium engine) | ARM64 `.exe` (NSIS) |
 | macOS | macOS 12+ (bundled Chromium engine) | Intel / Apple Silicon `.dmg` |
 | Linux | Bundled Chromium engine | x64 `.AppImage` / `.deb` |
 

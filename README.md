@@ -91,7 +91,7 @@
 
 | 平台 | 要求 | 安装包 |
 | --- | --- | --- |
-| Windows | Windows 10+（内置 Chromium 内核） | x64 `.exe` / `.msi` |
+| Windows | Windows 10+（内置 Chromium 内核） | ARM64 `.exe`（NSIS） |
 | macOS | macOS 12+（内置 Chromium 内核） | Intel / Apple Silicon `.dmg` |
 | Linux | 内置 Chromium 内核 | x64 `.AppImage` / `.deb` |
 

@@ -316,6 +316,15 @@ mod tests {
             arch_rank_for("Deepseek.Harness.Desktop-0.15.3-1.aarch64.rpm", true),
             2
         );
+        // Windows ARM64：NSIS 产物名带 `_arm64`，宿主也必须挑对安装包
+        assert_eq!(
+            arch_rank_for("Deepseek.Harness.Desktop_0.30.4_arm64-setup.exe", true),
+            2
+        );
+        assert_eq!(
+            arch_rank_for("Deepseek.Harness.Desktop_0.30.4_x64-setup.exe", true),
+            0
+        );
         // 通用包任何架构都可用
         assert_eq!(
             arch_rank_for("Deepseek.Harness.Desktop-universal.dmg", true),

@@ -26,7 +26,7 @@ on:
           - all
           - macos-aarch64
           - macos-x86_64
-          - windows
+          - windows-arm64
           - linux
 
 permissions:
@@ -114,7 +114,7 @@ jobs:
           ### 📦 Artifacts
           - **macOS (Apple Silicon)**: 下载 `aarch64.dmg`
           - **macOS (Intel)**: 下载 `x64.dmg`
-          - **Windows**: 下载 `.exe`
+          - **Windows (ARM64)**: 下载 `_arm64-setup.exe`
           - **Linux (x64)**: 下载 `.AppImage` 或 `.deb`（基于 Ubuntu 22.04 构建）
           - **Linux (ARM64)**: 下载 `aarch64.AppImage` 或 `arm64.deb`（基于 Ubuntu 22.04 构建，GLIBC 符号上限 2.35）
           - **Android**: 桌面端发布后追加 `.apk`；未配置签名密钥时使用开发证书，仅供评估
@@ -156,7 +156,7 @@ jobs:
       needs.prepare.result == 'success' &&
       (github.event_name != 'workflow_dispatch' ||
        inputs.platform_filter == 'all' ||
-       inputs.platform_filter == 'windows')
+       inputs.platform_filter == 'windows-arm64')
     uses: ./.github/workflows/build-windows.yml
     with:
       source_ref: ${{ needs.prepare.outputs.source_ref }}

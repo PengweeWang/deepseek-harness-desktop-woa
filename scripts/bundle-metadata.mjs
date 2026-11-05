@@ -136,16 +136,14 @@ export function parseVersionFromTag(tag) {
 /** Node.js 官方发行包资产名（与 `config::runtime::node_pkg_filename` 一致）。 */
 export function nodeAssetName(platform, arch, version) {
   const os = platform === 'macos' ? 'darwin' : platform === 'windows' ? 'win' : 'linux'
-  // 与 Rust 一致：Windows 只提供 x64 发行包（arm64 主机走 x64 模拟）。
-  const cpu = platform === 'windows' ? 'x64' : arch
   const ext = platform === 'windows' ? 'zip' : 'tar.gz'
-  return `node-v${version}-${os}-${cpu}.${ext}`
+  return `node-v${version}-${os}-${arch}.${ext}`
 }
 
 /** deepseek-harness-pkg 发行资产名（与 `config::runtime::dsh_pkg_asset_filename` 一致）。 */
 export function dshAssetName(platform, arch) {
   if (platform === 'windows')
-    return 'deepseek-harness-pkg-windows.zip'
+    return arch === 'arm64' ? 'deepseek-harness-pkg-windows-arm64.zip' : 'deepseek-harness-pkg-windows.zip'
   if (platform === 'linux')
     return arch === 'arm64' ? 'deepseek-harness-pkg-linux-arm64.zip' : 'deepseek-harness-pkg-linux.zip'
   return arch === 'arm64' ? 'deepseek-harness-pkg-macos-arm64.zip' : 'deepseek-harness-pkg-macos-x64.zip'

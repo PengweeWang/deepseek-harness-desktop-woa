@@ -56,7 +56,8 @@ fn node_pkg_filename(os: &str, arch: &str) -> Result<String, String> {
     match (os, arch) {
         ("macos", "aarch64") => Ok(format!("node-{}-darwin-arm64.tar.gz", NODE_VERSION)),
         ("macos", "x86_64") => Ok(format!("node-{}-darwin-x64.tar.gz", NODE_VERSION)),
-        ("windows", _) => Ok(format!("node-{}-win-x64.zip", NODE_VERSION)),
+        ("windows", "aarch64") => Ok(format!("node-{}-win-arm64.zip", NODE_VERSION)),
+        ("windows", "x86_64") => Ok(format!("node-{}-win-x64.zip", NODE_VERSION)),
         ("linux", "x86_64") => Ok(format!("node-{}-linux-x64.tar.gz", NODE_VERSION)),
         ("linux", "aarch64") => Ok(format!("node-{}-linux-arm64.tar.gz", NODE_VERSION)),
         _ => Err(format!("Unsupported platform: {} {}", os, arch)),
@@ -77,7 +78,8 @@ pub fn get_node_download_url() -> Result<String, String> {
 /// Harness 发行版资产文件名（按平台与架构）
 fn dsh_pkg_asset_filename(os: &str, arch: &str) -> Result<String, String> {
     match (os, arch) {
-        ("windows", _) => Ok("deepseek-harness-pkg-windows.zip".to_string()),
+        ("windows", "aarch64") => Ok("deepseek-harness-pkg-windows-arm64.zip".to_string()),
+        ("windows", "x86_64") => Ok("deepseek-harness-pkg-windows.zip".to_string()),
         ("macos", "aarch64") => Ok("deepseek-harness-pkg-macos-arm64.zip".to_string()),
         ("macos", "x86_64") => Ok("deepseek-harness-pkg-macos-x64.zip".to_string()),
         ("linux", "x86_64") => Ok("deepseek-harness-pkg-linux.zip".to_string()),
@@ -1161,7 +1163,7 @@ mod tests {
     }
 
     #[test]
-    fn dsh_pkg_asset_filename_matches_linux_architecture() {
+    fn dsh_pkg_asset_filename_matches_target_architecture() {
         assert_eq!(
             dsh_pkg_asset_filename("linux", "x86_64").unwrap(),
             "deepseek-harness-pkg-linux.zip"
@@ -1170,7 +1172,16 @@ mod tests {
             dsh_pkg_asset_filename("linux", "aarch64").unwrap(),
             "deepseek-harness-pkg-linux-arm64.zip"
         );
+        assert_eq!(
+            dsh_pkg_asset_filename("windows", "x86_64").unwrap(),
+            "deepseek-harness-pkg-windows.zip"
+        );
+        assert_eq!(
+            dsh_pkg_asset_filename("windows", "aarch64").unwrap(),
+            "deepseek-harness-pkg-windows-arm64.zip"
+        );
         assert!(dsh_pkg_asset_filename("linux", "riscv64").is_err());
+        assert!(dsh_pkg_asset_filename("windows", "riscv64").is_err());
     }
 
     #[test]
@@ -1196,7 +1207,7 @@ mod tests {
             (
                 "windows",
                 "aarch64",
-                format!("node-{}-win-x64.zip", NODE_VERSION),
+                format!("node-{}-win-arm64.zip", NODE_VERSION),
             ),
             (
                 "macos",

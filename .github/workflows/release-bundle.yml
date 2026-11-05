@@ -29,7 +29,7 @@ on:
           - all
           - macos-aarch64
           - macos-x86_64
-          - windows
+          - windows-arm64
           - linux
       tag:
         description: 目标 release tag（留空 = 发测试预发布；指定时需从该 tag 的提交触发）
@@ -236,7 +236,7 @@ jobs:
       needs.prepare.outputs.should_build == 'true' &&
       (github.event_name != 'workflow_dispatch' ||
        inputs.platform_filter == 'all' ||
-       inputs.platform_filter == 'windows')
+       inputs.platform_filter == 'windows-arm64')
     uses: ./.github/workflows/build-bundle-windows.yml
     with:
       source_ref: ${{ needs.prepare.outputs.source_ref }}
@@ -303,6 +303,7 @@ jobs:
             case "$artifact" in
               *macos-aarch64*) suffix="_aarch64" ;;
               *macos-x86_64*) suffix="_x64" ;;
+              *windows*) suffix="_arm64" ;;
             esac
             for file in "$dir"*; do
               [ -f "$file" ] || continue
