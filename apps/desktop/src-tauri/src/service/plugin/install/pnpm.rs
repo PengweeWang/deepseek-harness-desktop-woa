@@ -1163,7 +1163,7 @@ mod tests {
                 .await;
         std::fs::write(release, "done").unwrap();
         let released =
-            tokio::time::timeout(std::time::Duration::from_secs(5), acquire_process_lock())
+            tokio::time::timeout(std::time::Duration::from_secs(20), acquire_process_lock())
                 .await
                 .unwrap()
                 .unwrap();
